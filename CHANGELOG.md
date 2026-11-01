@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.3 - 2026-11-01
+
+- Find the signed Codex launcher through the `entrypoint` declared in
+  `Resources/codex-cli/codex-package.json`. Newer ChatGPT releases moved the
+  bundled Codex there, so the bridge exited at startup with "OpenAI's signed
+  Codex launcher was not found". The previous `Resources/codex` location is
+  still checked for older releases. Verified with ChatGPT 26.1027.51404
+  (bundled Codex 0.166.0-alpha.5.1).
+
 ## 0.1.2 - 2026-08-18
 
 - Restore `Escape` as a valid `press_key` example. Testing against the real

@@ -2,7 +2,7 @@
 
 import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -44,13 +44,45 @@ function resolveUpstreamPath() {
   );
 }
 
+async function readPackagedLauncherPath(packageDir) {
+  try {
+    const manifest = JSON.parse(
+      await readFile(path.join(packageDir, "codex-package.json"), "utf8"),
+    );
+    if (typeof manifest?.entrypoint === "string" && manifest.entrypoint) {
+      return path.resolve(packageDir, manifest.entrypoint);
+    }
+  } catch {
+    // No readable package manifest: an older app layout.
+  }
+  return null;
+}
+
 async function resolveTrustedLauncherPath() {
   const override = process.env.COMPUTER_USE_CODEX_LAUNCHER_PATH?.trim();
-  const candidates = [
-    override,
-    "/Applications/ChatGPT.app/Contents/Resources/codex",
-    "/Applications/Codex.app/Contents/Resources/codex",
-  ].filter(Boolean);
+  // Tests point this at a fake Applications folder.
+  const applicationsDir =
+    process.env.COMPUTER_USE_BRIDGE_APPLICATIONS_DIR?.trim() || "/Applications";
+  const candidates = override ? [override] : [];
+
+  // Newer ChatGPT releases bundle Codex as a package in Resources/codex-cli
+  // whose manifest names its launcher. Older releases put the launcher
+  // directly at Resources/codex.
+  for (const appName of ["ChatGPT.app", "Codex.app"]) {
+    const resourcesDir = path.join(
+      applicationsDir,
+      appName,
+      "Contents",
+      "Resources",
+    );
+    const packaged = await readPackagedLauncherPath(
+      path.join(resourcesDir, "codex-cli"),
+    );
+    if (packaged) {
+      candidates.push(packaged);
+    }
+    candidates.push(path.join(resourcesDir, "codex"));
+  }
 
   for (const candidate of candidates) {
     try {

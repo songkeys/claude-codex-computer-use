@@ -152,8 +152,14 @@ Environment variables:
 The signed launcher is discovered in this order:
 
 1. `COMPUTER_USE_CODEX_LAUNCHER_PATH`
-2. `/Applications/ChatGPT.app/Contents/Resources/codex`
-3. `/Applications/Codex.app/Contents/Resources/codex`
+2. The `entrypoint` declared in
+   `/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-package.json`
+3. `/Applications/ChatGPT.app/Contents/Resources/codex`
+4. The same two locations inside `/Applications/Codex.app`
+
+Newer ChatGPT releases bundle Codex as a package under `Resources/codex-cli`
+and name its launcher in that manifest. Older releases place the launcher
+directly at `Resources/codex`.
 
 ## Security and data flow
 
@@ -211,6 +217,13 @@ verifies that `get_app_state` returns both text and a JPEG screenshot.
 The Computer Use client was started directly instead of through the signed
 Codex launcher. Ensure ChatGPT or Codex is installed in `/Applications`, or set
 `COMPUTER_USE_CODEX_LAUNCHER_PATH`.
+
+### `OpenAI's signed Codex launcher was not found`
+
+ChatGPT or Codex is not installed in `/Applications`, or an update moved its
+bundled Codex again. Set `COMPUTER_USE_CODEX_LAUNCHER_PATH` to the Codex
+executable inside the app, for example
+`/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex`.
 
 ### Computer Use client is missing
 
