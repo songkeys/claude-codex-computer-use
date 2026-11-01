@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import test from "node:test";
@@ -77,6 +79,62 @@ function createMessageReader(stream) {
 
 function write(child, message) {
   child.stdin.write(`${JSON.stringify(message)}\n`);
+}
+
+// Stands in for the signed Codex launcher: accepts only the sandbox
+// invocation the bridge makes, then runs the client it wraps.
+const fakeLauncherScript = `#!/bin/sh
+[ "$1" = sandbox ] && [ "$2" = --sandbox-state-json ] && [ "$4" = -- ] || exit 64
+shift 4
+exec "$@"
+`;
+
+async function installFakeLauncher(launcherPath) {
+  await mkdir(path.dirname(launcherPath), { recursive: true });
+  await writeFile(launcherPath, fakeLauncherScript, { mode: 0o755 });
+}
+
+async function initializeThroughLauncher(applicationsDir) {
+  const child = spawn(process.execPath, [bridgePath], {
+    env: {
+      ...process.env,
+      COMPUTER_USE_CLIENT_PATH: fakeUpstreamPath,
+      COMPUTER_USE_CODEX_LAUNCHER_PATH: "",
+      COMPUTER_USE_BRIDGE_APPLICATIONS_DIR: applicationsDir,
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+
+  const waitFor = createMessageReader(child.stdout);
+
+  write(child, {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-11-25",
+      capabilities: {},
+      clientInfo: {
+        name: "bridge-test",
+        version: "1.0.0",
+      },
+    },
+  });
+
+  const initialized = await waitFor((message) => message.id === 1);
+
+  child.stdin.end();
+  const exit = await new Promise((resolve) => {
+    child.on("close", (code, signal) => resolve({ code, signal }));
+  });
+
+  return { initialized, exit, stderr };
 }
 
 test("injects elicitation support, auto-accepts, and preserves image blocks", async () => {
@@ -345,4 +403,57 @@ test("recycles the client after a user-stopped app session", async () => {
     code: 0,
     signal: null,
   });
+});
+
+test("launches the client through the Codex package entrypoint", async () => {
+  const applicationsDir = await mkdtemp(
+    path.join(os.tmpdir(), "bridge-applications-"),
+  );
+  try {
+    const packageDir = path.join(
+      applicationsDir,
+      "ChatGPT.app",
+      "Contents",
+      "Resources",
+      "codex-cli",
+    );
+    await installFakeLauncher(path.join(packageDir, "libexec", "codex"));
+    await writeFile(
+      path.join(packageDir, "codex-package.json"),
+      JSON.stringify({ layoutVersion: 1, entrypoint: "libexec/codex" }),
+    );
+
+    const { initialized, exit, stderr } =
+      await initializeThroughLauncher(applicationsDir);
+    assert.equal(initialized.result?.serverInfo?.name, "fake-computer-use");
+    assert.deepEqual(exit, {
+      code: 0,
+      signal: null,
+    });
+    assert.equal(stderr, "");
+  } finally {
+    await rm(applicationsDir, { recursive: true, force: true });
+  }
+});
+
+test("falls back to the legacy Codex launcher location", async () => {
+  const applicationsDir = await mkdtemp(
+    path.join(os.tmpdir(), "bridge-applications-"),
+  );
+  try {
+    await installFakeLauncher(
+      path.join(applicationsDir, "Codex.app", "Contents", "Resources", "codex"),
+    );
+
+    const { initialized, exit, stderr } =
+      await initializeThroughLauncher(applicationsDir);
+    assert.equal(initialized.result?.serverInfo?.name, "fake-computer-use");
+    assert.deepEqual(exit, {
+      code: 0,
+      signal: null,
+    });
+    assert.equal(stderr, "");
+  } finally {
+    await rm(applicationsDir, { recursive: true, force: true });
+  }
 });
